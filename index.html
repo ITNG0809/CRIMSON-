@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CRIMSON式輪切りツール</title>
+  <link rel="stylesheet" href="輪切り.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+</head>
+
+<body>
+  <header class="top-bar">
+    <div class="top-title">CRIMSON式輪切りツール</div>
+    <button id="processBtn" class="top-button">スライスしてZIP保存</button>
+    <button id="previewBtn" class="top-button">プレビュー</button>
+  </header>
+
+  <main class="tool-layout">
+    <section class="settings-panel">
+      <h2>設定</h2>
+
+      <div class="settings-grid">
+        <div class="setting-item">
+          <label for="imageInput">画像ファイル</label>
+          <input type="file" id="imageInput" accept="image/*">
+        </div>
+
+        <div class="setting-item">
+          <label for="direction">分割方向</label>
+          <select id="direction">
+            <option value="vertical">縦</option>
+            <option value="horizontal">横</option>
+          </select>
+        </div>
+
+        <div class="setting-item">
+          <label for="sliceSize">スライス幅</label>
+          <input type="number" id="sliceSize" value="32" min="1">
+        </div>
+      </div>
+
+      <div class="settings-row">
+        <label class="checkbox-label">
+          <input type="checkbox" id="extraPixel">
+          余分な1ピクセルを追加
+        </label>
+
+        <div class="prefix-box">
+          <label for="prefix">ファイル名プレフィックス</label>
+          <input type="text" id="prefix" value="slice_">
+        </div>
+      </div>
+
+      <div class="animation-settings">
+        <h3>アニメーション</h3>
+
+        <label class="checkbox-label">
+          <input type="checkbox" id="waveToggle">
+          波形アニメーション
+        </label>
+
+        <div class="slider-row">
+          <label for="waveHeight">
+            うねり度 <span id="heightValue">10</span>
+          </label>
+          <input type="range" id="waveHeight" min="0" max="100" value="10">
+        </div>
+
+        <div class="slider-row">
+          <label for="waveSpeed">
+            速度 <span id="speedValue">5</span>
+          </label>
+          <input type="range" id="waveSpeed" min="1" max="20" value="5">
+        </div>
+      </div>
+
+      <div id="status" class="status">画像を選択してください</div>
+    </section>
+
+    <section class="preview-panel">
+      <h2>プレビュー</h2>
+      <div id="previewContainer" class="preview-container">
+        <div class="preview-empty">ここにプレビューが表示されます</div>
+      </div>
+    </section>
+  </main>
+
+<script>
+const imageInput = document.getElementById("imageInput");
+const direction = document.getElementById("direction");
+const sliceSize = document.getElementById("sliceSize");
+const extraPixel = document.getElementById("extraPixel");
+const prefix = document.getElementById("prefix");
+
+const processBtn = document.getElementById("processBtn");
+const previewBtn = document.getElementById("previewBtn");
+
+const waveToggle = document.getElementById("waveToggle");
+const waveHeight = document.getElementById("waveHeight");
+const waveSpeed = document.getElementById("waveSpeed");
+
+const heightValue = document.getElementById("heightValue");
+const speedValue = document.getElementById("speedValue");
+
+const status = document.getElementById("status");
+const previewContainer = document.getElementById("previewContainer");
+
+let loadedImage = null;
+let animationFrame = null;
+let previewCanvas = null;
+let previewTime = 0;
+
+
+/* -------------------------
+   スライダー表示
+------------------------- */
+waveHeight.addEventListener("input", () => {
+  heightValue.textContent = waveHeight.value;
+  refreshPreview();
+});
+
+waveSpeed.addEventListener("input", () => {
+  speedValue.textContent = waveSpeed.value;
+});
+
+
+/* -------------------------
+   画像読み込み
+------------------------- */
+imageInput.addEventListener("change", () => {
+  const file = imageInput.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+
+  reader.onload = event => {
+    const img = new Image();
+
+    img.onload = () => {
+      loadedImage = img;
+      status.textContent = `画像読み込み完了：${img.width} × ${img.height}px`;
+      refreshPreview();
+    };
+
+    img.src = event.target.result;
+  };
+
+  reader.readAsDataURL(file);
+});
+
+
+/* -------------------------
+   実際のスライス
+   ZIP保存専用
+------------------------- */
+function createSlices() {
+  if (!loadedImage) return [];
+
+  const img = loadedImage;
+  const size = Math.max(1, parseInt(sliceSize.value, 10) || 1);
+  const slices = [];
+
+  if (direction.value === "vertical") {
+    const count = Math.ceil(img.width / size);
+
+    for (let i = 0; i < count; i++) {
+      const x = i * size;
+
+      let width = Math.min(size, img.width - x);
+
+      if (extraPixel.checked) {
+        width = Math.min(width + 1, img.width - x);
+      }
+
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = img.height;
+
+      const ctx = canvas.getContext("2d");
+
+      ctx.drawImage(
+        img,
+        x, 0, width, img.height,
+        0, 0, width, img.height
+      );
+
+      slices.push(canvas);
+    }
+  } else {
+    const count = Math.ceil(img.height / size);
+
+    for (let i = 0; i < count; i++) {
+      const y = i * size;
+
+      let height = Math.min(size, img.height - y);
+
+      if (extraPixel.checked) {
+        height = Math.min(height + 1, img.height - y);
+      }
+
+      const canvas = document.createElement("canvas");
+      canvas.width = img.width;
+      canvas.height = height;
+
+      const ctx = canvas.getContext("2d");
+
+      ctx.drawImage(
+        img,
+        0, y, img.width, height,
+        0, 0, img.width, height
+      );
+
+      slices.push(canvas);
+    }
+  }
+
+  return slices;
+}
+
+
+/* -------------------------
+   分割枚数
+------------------------- */
+function getSliceCount() {
+  if (!loadedImage) return 0;
+
+  const size = Math.max(1, parseInt(sliceSize.value, 10) || 1);
+
+  return direction.value === "vertical"
+    ? Math.ceil(loadedImage.width / size)
+    : Math.ceil(loadedImage.height / size);
+}
+
+
+/* -------------------------
+   通常プレビュー
+------------------------- */
+function drawNormalPreview(canvas) {
+  canvas.width = loadedImage.width;
+  canvas.height = loadedImage.height;
+
+  const ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(loadedImage, 0, 0);
+}
+
+
+/* -------------------------
+   波形プレビュー
+   ★ 1枚のCanvasに描画
+   ★ スライス間の横方向の隙間なし
+   ★ 画像外は透明
+   ★ 端ピクセルの引き伸ばしなし
+------------------------- */
+function drawWavePreview(canvas, time) {
+  const width = loadedImage.width;
+  const height = loadedImage.height;
+
+  canvas.width = width;
+  canvas.height = height;
+
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+
+  const sourceCanvas = document.createElement("canvas");
+  sourceCanvas.width = width;
+  sourceCanvas.height = height;
+
+  const sourceCtx = sourceCanvas.getContext("2d", { willReadFrequently: true });
+  sourceCtx.drawImage(loadedImage, 0, 0);
+
+  const sourceData = sourceCtx.getImageData(0, 0, width, height);
+  const outputData = ctx.createImageData(width, height);
+
+  const source = sourceData.data;
+  const output = outputData.data;
+
+  const size = Math.max(1, parseInt(sliceSize.value, 10) || 1);
+  const wave = Number(waveHeight.value);
+  const speed = Number(waveSpeed.value);
+
+  /* 縦スライス：各スライスを上下にうねらせる */
+  if (direction.value === "vertical") {
+    for (let x = 0; x < width; x++) {
+      const sliceIndex = Math.floor(x / size);
+
+      const offset =
+        Math.sin(
+          time * speed * 0.04 + sliceIndex * 0.65
+        ) * wave;
+
+      for (let y = 0; y < height; y++) {
+        const sourceY = Math.round(y - offset);
+
+        /* 画像の外側は透明。端ピクセルを複製しない */
+        if (sourceY < 0 || sourceY >= height) {
+          continue;
+        }
+
+        const sourceIndex = (sourceY * width + x) * 4;
+        const outputIndex = (y * width + x) * 4;
+
+        output[outputIndex]     = source[sourceIndex];
+        output[outputIndex + 1] = source[sourceIndex + 1];
+        output[outputIndex + 2] = source[sourceIndex + 2];
+        output[outputIndex + 3] = source[sourceIndex + 3];
+      }
+    }
+  }
+
+  /* 横スライス：各スライスを左右にうねらせる */
+  else {
+    for (let y = 0; y < height; y++) {
+      const sliceIndex = Math.floor(y / size);
+
+      const offset =
+        Math.sin(
+          time * speed * 0.04 + sliceIndex * 0.65
+        ) * wave;
+
+      for (let x = 0; x < width; x++) {
+        const sourceX = Math.round(x - offset);
+
+        /* 画像の外側は透明。端ピクセルを複製しない */
+        if (sourceX < 0 || sourceX >= width) {
+          continue;
+        }
+
+        const sourceIndex = (y * width + sourceX) * 4;
+        const outputIndex = (y * width + x) * 4;
+
+        output[outputIndex]     = source[sourceIndex];
+        output[outputIndex + 1] = source[sourceIndex + 1];
+        output[outputIndex + 2] = source[sourceIndex + 2];
+        output[outputIndex + 3] = source[sourceIndex + 3];
+      }
+    }
+  }
+
+  ctx.putImageData(outputData, 0, 0);
+}
+
+
+/* -------------------------
+   プレビュー更新
+------------------------- */
+function refreshPreview() {
+  if (animationFrame) {
+    cancelAnimationFrame(animationFrame);
+    animationFrame = null;
+  }
+
+  if (!loadedImage) return;
+
+  previewContainer.innerHTML = "";
+
+  previewCanvas = document.createElement("canvas");
+  previewCanvas.className = "preview-canvas";
+
+  previewContainer.appendChild(previewCanvas);
+
+  const count = getSliceCount();
+  status.textContent = `${count}枚に分割されます`;
+
+  if (!waveToggle.checked) {
+    drawNormalPreview(previewCanvas);
+    return;
+  }
+
+  previewTime = 0;
+
+  function animate() {
+    if (!previewCanvas || !loadedImage || !waveToggle.checked) return;
+
+    previewTime += 1;
+    drawWavePreview(previewCanvas, previewTime);
+
+    animationFrame = requestAnimationFrame(animate);
+  }
+
+  animate();
+}
+
+
+/* -------------------------
+   プレビュー
+------------------------- */
+previewBtn.addEventListener("click", refreshPreview);
+
+
+/* -------------------------
+   ZIP保存
+------------------------- */
+processBtn.addEventListener("click", async () => {
+  if (!loadedImage) {
+    status.textContent = "先に画像を選択してください";
+    return;
+  }
+
+  const slices = createSlices();
+  if (!slices.length) return;
+
+  const zip = new JSZip();
+  const filePrefix = prefix.value || "slice_";
+
+  status.textContent = "ZIPを作成しています…";
+  processBtn.disabled = true;
+
+  try {
+    for (let i = 0; i < slices.length; i++) {
+      const blob = await new Promise(resolve => {
+        slices[i].toBlob(resolve, "image/png");
+      });
+
+      const number = String(i + 1).padStart(3, "0");
+      zip.file(`${filePrefix}${number}.png`, blob);
+    }
+
+    const zipBlob = await zip.generateAsync({ type: "blob" });
+    const url = URL.createObjectURL(zipBlob);
+
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "slices.zip";
+
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+
+    URL.revokeObjectURL(url);
+
+    status.textContent = `${slices.length}枚をZIP保存しました！`;
+  } catch (error) {
+    console.error(error);
+    status.textContent = "ZIPの作成中にエラーが発生しました。";
+  } finally {
+    processBtn.disabled = false;
+  }
+});
+
+
+/* -------------------------
+   設定変更
+------------------------- */
+direction.addEventListener("change", refreshPreview);
+sliceSize.addEventListener("input", refreshPreview);
+extraPixel.addEventListener("change", refreshPreview);
+waveToggle.addEventListener("change", refreshPreview);
+</script>
+
+</body>
+</html>
